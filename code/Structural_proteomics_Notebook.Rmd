@@ -1,8 +1,8 @@
 ---
 title: "Protein structure-based homology and machine learning"
 subtitle: "Scripts to reproduce figures and tables in manuscript GIGA-D-18-00288"
-author: "Brendan R.E. Ansell; ansell.b@wehi.edu.au "
-date: "7/30/2018"
+author: "Brendan R.E. Ansell"
+date: "10/16/2018"
 output: 
   html_notebook:
     #theme: united
@@ -15,7 +15,7 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message=FALSE, tidy = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, tidy = TRUE)
 
 
 library(tidyverse); library(ggplot2); 
@@ -28,34 +28,42 @@ select <- dplyr::select
 
 ```
 
-
 #Data import 
 
-Read in data sets for BLAST annotation, PFAM annotation and I-TASSER output metrics.
+Read in data sets for BLAST annotation, PFAM annotation and I-TASSER output metrics
 ```{r, eval=TRUE}
-GeneDesc <- read_tsv("../data/GiardiaDB-3.1_GintestinalisAssemblageA_AnnotatedProteins.description",col_names = FALSE)
+GeneDesc <- read_tsv("../data/GiardiaDB-39_GintestinalisAssemblageA_AnnotatedProteins.description",
+                     col_names = FALSE, col_types = cols())
+
 names(GeneDesc) <- c('GeneID','Description')
 
 metrics_df <- read.delim("../data/metrics_clean.txt",sep="\t", stringsAsFactors = FALSE, quote="", header=TRUE)
 
-mismatch_BLAST <- read_tsv("../data/mismatches_BLAST.tsv")
+mismatch_BLAST <- read_tsv("../data/mismatches_BLAST.tsv", col_types = cols())
 
-PDB_pfam <- read_tsv("../data/hmmer_pdb_all.txt")  #accessed in Oct 2017
+PDB_pfam <- read_tsv("../data/hmmer_pdb_all.txt", col_types = cols())  #accessed in Oct 2017
 
 PDB_pfam <- PDB_pfam %>% mutate(code_chain=paste0(PDB_ID,CHAIN_ID)) %>%  
             separate(PFAM_ACC, into=c('PFAMpref','PFAMsuff')) 
 
 ###Giardia PFAM domains
-#GDB_pfam <- read_tsv("http://giardiadb.org/common/downloads/release-3.1/GintestinalisAssemblageA/txt/GiardiaDB-3.1_GintestinalisAssemblageA_InterproDomains.txt") 
-#GDB_pfam <- GDB_pfam %>% filter(str_detect(PFAMpref,'PF')) %>% distinct()
-#names(GDB_pfam) <- c('GeneID','source','PFAMpref','Desc','GDBpfam_start','GDBpfam_end','pVal')
 
-GDB_pfam <- read_tsv('../data/GDB_pfam.txt')
+#GDB_IPS <- read_tsv("http://giardiadb.org/common/downloads/release-39/GintestinalisAssemblageAWB/txt/GiardiaDB-39_GintestinalisAssemblageAWB_InterproDomains.txt", col_names = FALSE) 
+
+GDB_IPS <- read_tsv("../data/GiardiaDB-39_GintestinalisAssemblageAWB_InterproDomains.txt", 
+                    col_types = cols(), col_names = FALSE)
+names(GDB_IPS) <- c('GeneID','source','InterproID','Desc','GDBpfam_start','GDBpfam_end','eVal')
+
+GDB_pfam <- GDB_IPS %>% filter(str_detect(InterproID,'^PF')) %>%
+  dplyr::rename(PFAMpref=InterproID) %>% distinct()
+
+PFAM_descriptionTable <- read_tsv("../data/PFAM_descriptionMapping.tsv",col_names = TRUE, col_types = cols())
 
 ```
 
 ##Compute additional metrics
-Metrics computed from I-TASSER output: sd of secondary structure predictions, and query:reference length ratio.
+
+Metrics derived from I-TASSER output: sd of secondary structure predictions, and query:reference length ratio.
 ```{r, eval=TRUE}
 
 metrics_all <- metrics_df %>% 
@@ -68,10 +76,11 @@ metrics_all <- metrics_df %>%
 ```
 
 
+
 #Check positive controls
 ##SFigure 1
 
-Investigate discordant reference structure matches for Giardia peptides encoding solved structures
+Investigate discordant reference structure matches for *Giardia* peptides encoding solved structures
 
 ```{r}
 
@@ -98,11 +107,12 @@ mismatch_BLAST_status %>%
   theme(axis.text.x = element_text(angle=45,hjust=1)) +
   xlab("")
 
+ggsave("../results/SF1.pdf",width=8,height=4)
 
 ```
 
 
-Test differences in mean bit score and AA length ratios
+Test differences in BLAST bit scores, and query:reference AA length ratios
 ```{r}
 
 mismatch_BLAST_forTest <- mismatch_BLAST_status %>% unite(match_species, c(matchStatus,refSpecies))
@@ -126,8 +136,7 @@ TukeyHSD(aov_bitScore.res)
 ```
 
 
-
-# PFAM code matching
+#PFAM code matching
 
 Join PFAM annotation databases and identify query:reference pairs with at least 1 matching PFAM code.  
 Annotation: PFAM codes assigned to Giardia query peptides: 'GDB_pfam'   
@@ -135,92 +144,153 @@ Annotation: PFAM codes assigned to Giardia query peptides: 'GDB_pfam'
 
 ```{r, eval=TRUE}
 
-metrics_df_PFAM_long <- metrics_all %>% 
+metrics_long <- metrics_all %>% 
   mutate(code_chain=toupper(codechain)) %>% 
-  left_join(GDB_pfam, by="GeneID") %>% rename(GDB_PFAMpref=PFAMpref) %>% 
-  left_join(PDB_pfam, by="code_chain") %>% rename(PDB_PFAMpref=PFAMpref) %>% 
+  left_join(GDB_pfam,by="GeneID") %>% rename(GDB_PFAMpref=PFAMpref) %>% 
+  left_join(PDB_pfam,by="code_chain") %>% rename(PDB_PFAMpref=PFAMpref) %>% 
+  distinct() %>% rename(GDB_PFAM_desc = Desc, PDB_PFAM_desc = PFAM_desc)
+
+
+```
+
+Plot number of PFAM domains per query:reference pair
+```{r}
+nPFAM_Q_R <- metrics_long %>% 
+  select(GeneID, GDB_PFAMpref, PDB_PFAMpref) %>% 
+  distinct() %>% 
   group_by(GeneID) %>% 
-  mutate(matchStatus=ifelse(any(PDB_PFAMpref %in% GDB_PFAMpref),'exactMatch','noMatch')) %>% 
-  mutate(matchStatus=ifelse(is.na(GDB_PFAMpref)|is.na(PDB_PFAMpref),'noMatch',matchStatus))
+  summarize_at(vars(GDB_PFAMpref, PDB_PFAMpref), funs( . %>% na.omit() %>% n_distinct )) %>% 
+  rename(nPFAM_GDB = GDB_PFAMpref, nPFAM_PDB = PDB_PFAMpref )
+
+nPFAM_Q_R %>% gather(key,value,-GeneID) %>% ggplot(aes(value)) +
+  geom_bar(aes(fill=key), position="dodge", show.legend = TRUE) 
+```
+
+
+Calculate n. matching domains
+```{r}
+
+#Because all pairwise combinations of PFAM domains are listed, need only filter for exact match:
+nMatch_count <- metrics_long %>% 
+  select(GeneID,code,chain,code_chain,GDB_PFAMpref,PDB_PFAMpref) %>%
+  distinct() %>% 
+  group_by(GeneID) %>% 
+  filter(GDB_PFAMpref==PDB_PFAMpref) %>% 
+  summarize(n_Match = n()) 
+  
+nMatch <- metrics_all[ , "GeneID"] %>% 
+  left_join(nMatch_count, by="GeneID") %>% 
+  mutate(n_Match = ifelse(is.na(n_Match), 0 ,n_Match)) 
 
 ```
 
 Summarize PFAM matches across annotation groups
 ```{r}
-metrics_df_PFAM <- metrics_df_PFAM_long %>% 
-  dplyr::select(-c(PFAMsuff,contains('start'),contains('end'))) %>% 
-  ungroup() %>% distinct() 
+
+metrics_nMatch <- metrics_all %>% 
+  left_join(nPFAM_Q_R, by="GeneID") %>% 
+  left_join(nMatch,by="GeneID") %>% 
+   mutate(n_Match=ifelse(is.na(n_Match), 0, n_Match)) %>% 
+   mutate(matchStatus=ifelse(n_Match==0,'noMatch','exactMatch')) %>% 
+   left_join(GeneDesc,by="GeneID") %>% select(GeneID,Description,everything()) %>% 
+   mutate(descBin = ifelse(str_detect(Description,'hypothetical') | str_detect(Description,'Hypothetical'), 'Hyp','Annot')) 
+```
+
+```{r}
+metrics_nMatch %>% count(descBin,matchStatus) 
+```
 
 
-matched_df <- metrics_df_PFAM %>% select(1:code_chain,matchStatus) %>% distinct() 
-#matched_df %>%  count(matchStatus)
+##SFigure 2
+Relative peptide length and number of matching PFAM domains.
+```{r}
+lenRatio_X_nMatch <- metrics_nMatch %>% 
+  select(GeneID, Cov, GDB_AA, lenRatio, contains('nPFAM'),n_Match, descBin) %>% 
+  mutate(`n_Match:nPFAM_PDB` = n_Match/nPFAM_PDB) %>% 
+  na.omit() %>% 
+  group_by(n_Match, nPFAM_PDB) %>% summarize(median_lenRatio = median(lenRatio), 
+                                                mean_lenRatio = mean(lenRatio), 
+                                                mean_GDB_AAlen = mean(GDB_AA), 
+                                                median_GDB_AAlen = median(GDB_AA), 
+                                             group_size = n()) %>% 
+  arrange(n_Match, nPFAM_PDB, desc(group_size))
 
-matched_df_annot <- matched_df %>% left_join(GeneDesc,by="GeneID") %>% 
-  mutate(descBin = ifelse(str_detect(Description,'hypothetical') | str_detect(Description,'Hypothetical'), 'Hyp','Annot')) 
-matched_df_annot %>% count(descBin,matchStatus)  
 
-PFAM_Q_R_match_desc <- metrics_df_PFAM_long %>% group_by(GeneID) %>% select(GeneID,PDB_PFAMpref,GDB_PFAMpref) %>% 
-  mutate(queryPFAM=ifelse(!is.na(GDB_PFAMpref),1,0),
-         refPFAM=ifelse(!is.na(PDB_PFAMpref),1,0)) %>% 
-  #mutate(matchStatus=ifelse(any(PDB_PFAMpref==GDB_PFAMpref),'exactMatch','noMatch')) %>% 
-  mutate(matchStatus=ifelse(any(PDB_PFAMpref %in% GDB_PFAMpref),'exactMatch','noMatch')) %>% 
-  mutate(matchStatus=ifelse(is.na(GDB_PFAMpref)|is.na(PDB_PFAMpref),'noMatch',matchStatus)) %>% 
-  select(-contains('pref')) %>% distinct() %>% 
-  ungroup() %>% 
-  left_join(GeneDesc,by='GeneID') %>% 
-  mutate(descBin = ifelse(str_detect(Description,'hypothetical') | str_detect(Description,'Hypothetical'), 'Hyp','Annot')) 
+metrics_nMatch %>% 
+  filter(nPFAM_PDB<=4) %>% #filter(n_Match==0) %>% 
+  filter(nPFAM_PDB>0) %>% 
+  ggplot() + 
+  geom_boxplot(aes(x=n_Match , y=lenRatio, group=factor(n_Match)), alpha=0, width=0.5)+  
+  geom_jitter(aes(x=n_Match , y=lenRatio, col=factor(nPFAM_PDB), 
+                  group=factor(nPFAM_PDB)), 
+                  position=position_jitterdodge(dodge.width = 0.85), alpha=0.5, cex=0.25) +
+  geom_text(data=lenRatio_X_nMatch %>% 
+              filter(n_Match<=4, nPFAM_PDB<=4), 
+            aes(x=n_Match, y=3, label=group_size, group=nPFAM_PDB), size=3) +
+  facet_wrap( ~ nPFAM_PDB) +
+  theme(legend.position = "none") +
+  ggtitle("N. matching PFAM terms vs query:reference AA length ratio",
+          subtitle="Facet by n. PFAM terms in PDB reference") +
+  xlab("N. matching PFAM domains") + ylab("Query:reference AA length ratio")
 
-# PFAM_Q_R_match_desc %>%  
-#   count(queryPFAM,descBin) 
-  
-# PFAM_Q_R_match_desc %>%  
-#   count(refPFAM, descBin) 
+ggsave("../results/SF2.pdf",width=6,height=6)
 
 ```
 
 
 ##Figure 2a
 Plot intersection of BLAST annotation status and PFAM code annotations.
-```{r}
 
+```{r}
 source("upset.R")
 
-PFAM_Q_R_match_desc_Sets <- PFAM_Q_R_match_desc %>%  
-  dplyr::rename(Query = queryPFAM, Reference = refPFAM) %>% 
-  select(-Description) %>% 
-  mutate(Match = ifelse(matchStatus == 'noMatch', 0 ,1),
-  descCategory = ifelse(descBin=="Hyp",1,2)) 
+upSets <- metrics_nMatch %>% select(GeneID, descBin, nPFAM_GDB, nPFAM_PDB, n_Match) %>% 
+  mutate_at(vars(-GeneID, -descBin) , funs(binary = ifelse(. > 0, 1, 0))) %>% 
+  mutate(descCategory = ifelse(descBin=="Hyp",1,2)) %>%  
+  distinct() %>% select(GeneID, descCategory, contains('binary')) %>% 
+  rename(Query = nPFAM_GDB_binary, Reference = nPFAM_PDB_binary, Match = n_Match_binary)
 
-#PFAM_Q_R_match_desc_Sets %>% count(Query,Reference,matchStatus,descCategory)
-  
+upSets %>% count(descCategory, Query, Reference, Match)        
+
 annotStatus <- function(row, min, max){
   newData <- (row["descCategory"] <= max) & (row["descCategory"] > min)}
 
-upset(data.frame(PFAM_Q_R_match_desc_Sets %>% 
-                   dplyr::select(GeneID,Query,Reference,Match,descCategory)), 
+upset(data.frame(upSets), 
       sets=c('Query','Reference','Match'),
       main.bar.color = 'black',
       queries = list(list(query = annotStatus, params = list(1,2),
                           color="light blue",active=TRUE)), point.size=3)
 
+pdf("../results/F2a.pdf", width = 4,height=3, onefile = FALSE) #works..ish
+#pdf("../results/F2a.pdf", width = 4.5,height=3.5, onefile = FALSE)
+upset(data.frame(upSets), 
+      sets=c('Query','Reference','Match'),
+      main.bar.color = 'black',
+      queries = list(list(query = annotStatus, params = list(1,2),
+                          color="light blue",active=TRUE)), point.size=3)
+
+dev.off()
 
 ```
 
 
 
 ##Figure 2b
-PFAM term enrichment testing
-```{r}
 
+PFAM term enrichment testing
+
+
+```{r}
 source("rowwise_fisher.R")
 
-matchStatus_PFAMcounts <- metrics_df_PFAM_long %>% 
+matchStatus_PFAMcounts <- metrics_long %>% 
+  left_join(metrics_nMatch %>% select(GeneID, matchStatus), by="GeneID") %>% 
   dplyr::select(1,lenRatio, matchStatus, GDB_PFAMpref,PDB_PFAMpref) %>% 
   gather(key=DB,value=PFAM,-c(GeneID,matchStatus,lenRatio)) %>% 
   na.omit() %>% 
   filter(lenRatio >0.9 & lenRatio <1.1) %>% ungroup() %>% 
   count(matchStatus,DB,PFAM) %>% 
-  spread(key=DB,value=n, fill = 0) 
+  spread(key=DB, value=n, fill = 0) 
 
 #set up parameters for Fisher tables  
 myStatus <- "exactMatch"
@@ -234,7 +304,6 @@ termSums <- matchStatus_PFAMcounts %>%
   summarize(allForeground = sum(get(Foreground)),
             allBackground = sum(get(background)),
             allTerms = sum(get(Foreground),get(background))) %>% unlist()
-
 
 Fisher_df <- matchStatus_PFAMcounts %>% 
   filter(matchStatus==myStatus) %>% 
@@ -258,14 +327,15 @@ p <- t(apply(mydata %>%
                dplyr::select(a,b,c,d) %>% 
                filter(a >= minFreq), 1, row_fisher))
 
-Fisher_results <- cbind(mydata %>% filter(a >= minFreq) %>% 
+
+results <- cbind(mydata %>% filter(a >= minFreq) %>% 
                    dplyr::select(1:7), p) %>% 
+#1:7 as no background of repressed, lowly transcribed (<0.85 percentile; i.e., the equivalent of the nonDTG set), is included.
   arrange(p_val) %>% 
   mutate(adjP=p.adjust(.$p_val, method="BH" ))  #correction for multiple comparisons
 
-#No significant enrichment.
-
-Fisher_results %>% filter(p_val < 0.05) %>% 
+#No significant enrichment
+results %>% filter(p_val < 0.05) %>% 
   arrange(p_val) %>% 
   filter(matchStatus=='exactMatch') %>% 
   mutate(`Reference_PFAM` = Foreground/allForeground,
@@ -281,7 +351,36 @@ Fisher_results %>% filter(p_val < 0.05) %>%
   xlab("") + ylab("Proportion of PFAM terms") +
   labs(fill="")
 
+ggsave("../results/F2b.pdf",width=8,height=3.5)
+```
 
+
+
+##Check putative additional domains in NEK kinases
+EF hand domains in NEK kinases
+```{r}
+metrics_nMatch %>% filter(n_Match > 0, str_detect(Description,"NEK")) %>% 
+  filter(nPFAM_PDB > n_Match) %>% 
+  filter(code=="3HX4") %>% 
+  left_join(metrics_long,by="GeneID") %>% 
+  select(GeneID, n_Match, contains("PFAMpref"), contains("PFAM_desc")) %>% 
+  distinct() %>% 
+  filter(PDB_PFAMpref=="PF13499") 
+
+```
+
+
+Kinase domains hypothetical proteins
+```{r}
+metrics_nMatch %>% 
+  filter(descBin=="Hyp") %>% 
+  filter(nPFAM_PDB > n_Match) %>% 
+  filter(code=="4O1O") %>% 
+  left_join(metrics_long,by="GeneID") %>% 
+  group_by(GeneID) %>% filter(!str_detect(GDB_PFAM_desc,'kinase')) %>% 
+  select(GeneID, n_Match, contains("PFAMpref"), contains("PFAM_desc")) %>% 
+  distinct() %>% count(GeneID)
+         
 ```
 
 
@@ -289,24 +388,24 @@ Fisher_results %>% filter(p_val < 0.05) %>%
 ##Figure 2c
 Plot n. unique PFAM codes available via query and reference peptides.
 ```{r}
-
-nPDB <- metrics_df_PFAM_long %>% 
-  dplyr::select(1,lenRatio, matchStatus, GDB_PFAMpref,PDB_PFAMpref) %>% 
+metrics_nMatch %>% select(GeneID, contains('nPFAM'),  n_Match, matchStatus) %>% 
   filter(matchStatus=="exactMatch") %>% 
-  group_by(GeneID) %>% distinct() %>% count(PDB_PFAMpref) %>% 
-  count(GeneID) 
+  select(contains('nPFAM')) %>% 
+  gather(key=source,value=nPFAM) %>% 
+  ggplot(aes(x=nPFAM)) + geom_bar(aes(fill=source), position="dodge") +
+  xlab("N. unique PFAM codes") + ylab("N. proteins")
 
-nGDB <- metrics_df_PFAM_long %>% 
-  dplyr::select(1,lenRatio, matchStatus, GDB_PFAMpref,PDB_PFAMpref) %>% 
+
+metrics_nMatch %>% select(GeneID, contains('nPFAM'),  n_Match, matchStatus) %>% 
   filter(matchStatus=="exactMatch") %>% 
-  group_by(GeneID) %>% distinct() %>% count(GDB_PFAMpref) %>% 
-  count(GeneID)  
+  select(contains('nPFAM')) %>% 
+  gather(key=source,value=nPFAM) %>% 
+  group_by(source) %>% summarize(mean_nPFAM=mean(nPFAM)) 
 
-full_join(nPDB,nGDB, by="GeneID", suffix=c('_PDB','_GDB')) %>% 
-  dplyr::rename(Reference_PFAM = nn_PDB, Query_PFAM=nn_GDB) %>% 
-  gather(key,value,-GeneID) %>% 
-  ggplot(aes(x=value)) + geom_bar(aes(fill=key), position="dodge")
+ggsave("../results/F2c.pdf",width=5,height=4)
+
 ```
+
 
 
 
@@ -314,34 +413,48 @@ full_join(nPDB,nGDB, by="GeneID", suffix=c('_PDB','_GDB')) %>%
 #Random forest classifier
 
 ##Train classifier
-```{r}
+Create training and test data
+```{r, eval=TRUE}
 
-Gd_forRF <- matched_df_annot %>% select(1,TM:RMSD_model_sd,lenRatio,SS_sd,matchStatus) %>% na.omit()
-
+Gd_forRF <- metrics_nMatch %>% select(1,TM:RMSD_model_sd,lenRatio,SS_sd,matchStatus) %>% na.omit()
+#Gd_forRF %>% str()
   
 geneOrder <- read_tsv("../data/Gd_forRF_geneIDorder.tsv")
 
-Gd_forRF <- geneOrder %>% left_join(Gd_forRF,by="GeneID")  #original geneOrder
+Gd_forRF <- geneOrder %>% left_join(Gd_forRF, by="GeneID")  #original geneOrder
 
 
-set.seed(1234) ; forTRAIN_exact <- Gd_forRF %>% filter(matchStatus=="exactMatch") %>%  sample_n(750); 
-set.seed(1234) ; forTRAIN_noMatch <- Gd_forRF %>% filter(matchStatus!="exactMatch") %>%  sample_n(750); 
-
+set.seed(1234) ; forTRAIN_exact <- Gd_forRF %>% filter(matchStatus=="exactMatch") %>%  sample_n(750);
+set.seed(1234) ; forTRAIN_noMatch <- Gd_forRF %>% filter(matchStatus!="exactMatch") %>%  sample_n(750);
 forTRAIN <- rbind(forTRAIN_exact, forTRAIN_noMatch)
-#forTRAIN %>% count(matchStatus)
 
-set.seed(1234); TEST <- Gd_forRF %>% anti_join(forTRAIN, by="GeneID") %>% sample_n(1500) ; 
-#TEST %>% count(matchStatus)
+#set.seed(1234); TEST <- Gd_forRF %>% anti_join(forTRAIN, by="GeneID") %>% sample_n(1500) ; 
+
+set.seed(4321); forTEST_exact <- Gd_forRF %>% anti_join(forTRAIN_exact, by="GeneID") %>% filter(matchStatus=="exactMatch") %>% sample_n(250)
+      
+set.seed(4321); forTEST_noMatch <- Gd_forRF %>% anti_join(forTRAIN_noMatch, by="GeneID") %>% filter(matchStatus!="exactMatch") %>% sample_n(250)
+
+TEST <- rbind(forTEST_exact, forTEST_noMatch) 
 
 TRAIN <- forTRAIN %>% dplyr::select(-c(GeneID)) 
+```
 
+Model training is only run once.
+```{r, eval = FALSE}
 rf_model <- train(matchStatus ~. , data=TRAIN, method="rf",
-                  trControl = trainControl(method="cv", number=5, verboseIter=FALSE),
-                  prox=TRUE, verbose=FALSE)
+                  trControl = trainControl(method="cv", number=5, verboseIter=TRUE),
+                  prox=TRUE, verbose=TRUE)
+saveRDS(rf_model,"../data/rf_model.Rds")
+```
+
+Print final model
+```{r}
+rf_model <- readRDS("../data/rf_model.Rds")
 
 print(rf_model$finalModel)
 
 ```
+
 
 
 ##Classifier performance
@@ -353,52 +466,55 @@ predALL <- predict(rf_model, newdata=Gd_forRF, type="prob")
 #summary(predTEST)
 #summary(predALL)
 
-Gd_forRF %>% mutate(RFexact_pred = predALL$exactMatch) %>% 
-  mutate(predStatus=ifelse(RFexact_pred > 0.5,"exactMatch","noMatch")) %>% 
-  count(matchStatus, predStatus)
 
 #accuracy on hold-out TEST set:
 TEST %>%  mutate(RFexact_pred = predTEST$exactMatch) %>% 
-  mutate(predStatus=ifelse(RFexact_pred > 0.5,"exactMatch","noMatch")) %>% 
+  mutate(predStatus=ifelse(RFexact_pred >= 0.5,"exactMatch","noMatch")) %>% 
+  count(matchStatus, predStatus)
+
+#entire proteome
+Gd_forRF %>% mutate(RFexact_pred = predALL$exactMatch) %>% 
+  mutate(predStatus=ifelse(RFexact_pred >= 0.5,"exactMatch","noMatch")) %>% 
   count(matchStatus, predStatus)
 
 Gd_matchPredict <- Gd_forRF %>% mutate(exactMatchPred = predALL$exactMatch) %>% ungroup()
 
+
 ```
 
-
-###Compute feature importance
+##Fig 3a
+###Compute feature importance 
 ```{r}
 
-
-Gd_imp <- data.frame(varImp(rf_model, scale=FALSE)$importance) 
+Gd_imp <- data.frame(varImp(rf_model, scale=FALSE)$importance)  
 
 Gd_imp$noi  <- row.names(Gd_imp); row.names(Gd_imp) <- NULL
-names(Gd_imp) <- c('Contribn', 'impFactor') ; 
-Gd_imp <- Gd_imp %>%dplyr::select(2,1) %>% arrange(desc(Contribn)) %>%  
-  mutate(propCont = Contribn/sum(Contribn))
+names(Gd_imp) <- c('Contribn', 'impFactor') ; #head(Gd_imp)
+Gd_imp <- Gd_imp %>%dplyr::select(2,1) %>% arrange(desc(Contribn)) %>%  mutate(propCont = Contribn/sum(Contribn))
 
 imp_plot <- Gd_imp %>% 
   mutate(impFactor_recode = case_when(impFactor=="AApc" ~ 'AA_%ID',
                                impFactor=="Cscore" ~ 'C_score',
+                               impFactor=="AApc" ~ "AA_%ID",
                                impFactor=="Cov" ~ 'Coverage',
                                impFactor=="exactMatchPred" ~ 'Exact_match_prediction',
                                impFactor=="lenRatio" ~ 'Length_ratio',
                                TRUE ~ impFactor)) %>% 
   ggplot(aes(x=reorder(impFactor_recode, propCont), y=propCont)) +
   geom_bar(stat="identity", aes(fill=impFactor_recode), show.legend = FALSE) +
-  ylab("Importance") + xlab("") +
+  ylab("Importance") + xlab("") + ylim(0,0.3) +
   coord_flip()  
 
 imp_plot
 
-
-
+ggsave("../results/SF3a.pdf",imp_plot, width=4,height=3)
 
 ```
 
 
+##Fig 3b
 ###Sensitivity and specificity
+
 ```{r}
 
 ##AUROC
@@ -419,7 +535,7 @@ for (i in names(forROC)){#print(i)
   result <- data_frame('sensPlt' = rev(sens), 'specPlt' = rev(spec)) %>% mutate(Metric = i, AUC = rnd)
   aucOut <- rbind(aucOut,result) %>% na.omit() }
 
-aucOut %>%  mutate(Metric = case_when(Metric=="AApc" ~ 'AA_%ID',
+auc_plot <- aucOut %>%  mutate(Metric = case_when(Metric=="AApc" ~ 'AA_%ID',
                                Metric=="Cscore" ~ 'C_score',
                                Metric=="AApc" ~ "AA_%ID",
                                Metric=="Cov" ~ 'Coverage',
@@ -438,9 +554,11 @@ aucOut %>%  mutate(Metric = case_when(Metric=="AApc" ~ 'AA_%ID',
                                "Exact_match_prediction" = 'black','AA_length_ratio' = "#00BA38",
                                "RMSD" = "#00BFC4","TM_model" = "#F564E3")) 
 
-
 aucOut %>% select(-contains('Plt')) %>% distinct() %>% arrange(desc(AUC))
 
+auc_plot
+
+ggsave("../results/F3b.pdf",auc_plot, width=5,height=5)
 
 ```
 
@@ -448,16 +566,20 @@ aucOut %>% select(-contains('Plt')) %>% distinct() %>% arrange(desc(AUC))
 ##Test classifier on models from Human
 ```{r}
 
-Hs_TEST <- read_tsv("../data/Hsapiens_TESTdata.tsv")
+Hs_TEST <- read_tsv("../data/Hsapiens_TESTdata.tsv", col_types = cols())
 
-Hs_TEST %>% count(matchStatus)
+write_tsv(Hs_TEST, path="../results/STable1.tsv")
+
+#confirm that Gd TRAINing set and Hs_TEST set have same format
+#TRAIN %>% str()
+#Hs_TEST[,3:14] %>% str()
 
 pred_Hs <- as_tibble(predict(rf_model, newdata=Hs_TEST[,3:14], type="prob"))
 Hs_TESTpred <- cbind(Hs_TEST,pred_Hs) 
 
 Hs_TESTpred %>% mutate(pred_matchStatus = ifelse(exactMatch > 0.5,'exact','noMatch')) %>% 
-  count(matchStatus, pred_matchStatus)
-
+  count(matchStatus, pred_matchStatus) %>% 
+  group_by(matchStatus) %>% mutate(gpErr=n/sum(n))
 
 ```
 
@@ -465,12 +587,14 @@ Hs_TESTpred %>% mutate(pred_matchStatus = ifelse(exactMatch > 0.5,'exact','noMat
 ##Metric distribution by RF confidence
 ```{r}
 
-Gd_all <- matched_df_annot %>% left_join(Gd_matchPredict %>% dplyr::select(1,exactMatchPred),by="GeneID")  
+Gd_all <- metrics_nMatch %>% left_join(Gd_matchPredict %>% dplyr::select(1,exactMatchPred),by="GeneID")  
 
-Gd_all_RFconf <- Gd_all %>% mutate(RF_confidence = ifelse(matchStatus=="exactMatch" & exactMatchPred > 0.5, 'HiConf',
-                                ifelse(matchStatus=="noMatch" & exactMatchPred <= 0.5,'LowerConf',
-                                       ifelse(matchStatus=="exactMatch" & exactMatchPred <= 0.5, "LowerConf-like",
-                                              ifelse(matchStatus=="noMatch" & exactMatchPred > 0.5, "HiConf-like",""))))) 
+Gd_all_RFconf <- Gd_all %>% 
+  mutate(RF_confidence = case_when(matchStatus=="exactMatch" & exactMatchPred >= 0.5 ~ 'HiConf',
+                                matchStatus=="noMatch" & exactMatchPred < 0.5        ~ 'LowerConf',
+                                matchStatus=="exactMatch" & exactMatchPred < 0.5     ~ "LowerConf-like",
+                                matchStatus=="noMatch" & exactMatchPred >= 0.5       ~ "HiConf-like",
+                                TRUE ~ "")) 
 
 
 Gd_all_RFconf %>% select(TM:RMSD_model_sd,lenRatio,SS_sd,matchStatus,exactMatchPred,RF_confidence) %>% 
@@ -485,28 +609,34 @@ Gd_all_RFconf %>% select(TM:RMSD_model_sd,lenRatio,SS_sd,matchStatus,exactMatchP
                                           'TM_model','TM_model_sd','RMSD_model','RMSD_model_sd',
                                           'Exact_match_prediction'))) %>% 
   ggplot(aes(x=key, y=value, col=RF_confidence)) + 
-  geom_point(position=position_jitterdodge(jitter.width = 0.1, dodge.width=1), size=0.02, alpha=0.2, show.legend = TRUE) +
+  geom_point(position=position_jitterdodge(jitter.width = 0.1, dodge.width=1), 
+             size=0.02, alpha=0.2, show.legend = TRUE) +
   geom_boxplot( position=position_dodge(1), alpha=0) +
   xlab("") + ylab("") +
-  theme(legend.title=element_blank(), strip.background = element_blank(), strip.text.x = element_text(size=0)) +
+  theme(legend.title=element_blank(), 
+        strip.background = element_blank(), 
+        strip.text.x = element_text(size=0)) +
   facet_wrap( ~ key, scales="free")
 
+ggsave("../results/F4.pdf",width=9.5,height=9)
 
 ```
+
+
 
 
 ##SFigure 4a
 Technical variation: Train 500 models on the same data.
 ```{r, eval = FALSE}
 
-RF_train_iter500 <- data_frame('dummy'=rep(NA,nrow(Gd_forRF)))
+RF_train_iter500 <- data_frame('dummy'=rep(NA, nrow(Gd_forRF)))
 for(i in 1:500){
   
   a <- train(matchStatus ~. , data=TRAIN, method="rf",
              trControl = trainControl(method="cv", number=5, verboseIter=TRUE),
              prox=TRUE, verbose=TRUE)
   
-  fm <- as_data_frame(predict(a, newdata=Gd_forRF, type="prob"))
+  fm <- as_data_frame(predict(a, newdata = Gd_forRF, type="prob"))
   fm <- fm[ , 1]
   names(fm) <- paste0('rf_',i)
   RF_train_iter500 <- cbind(RF_train_iter500, fm)
@@ -515,10 +645,9 @@ for(i in 1:500){
 
 RF_train_iter500 <- RF_train_iter500[ , -1]
 
-#saveRDS("../data/RF_train_iter500.Rds")
-
+saveRDS(RF_train_iter500, "../data/RF_train_iter500.Rds")
 ```
-
+ 
 Plot technical variation
 ```{r}
 
@@ -528,11 +657,17 @@ RF_train_iter500_summary <- data_frame('mean' = rowMeans(RF_train_iter500),
                       'sd' = apply(RF_train_iter500 ,1, sd, na.rm = TRUE),
                       'sem' = apply(RF_train_iter500 , 1, function(x) sd(x)/sqrt(length(x))),
                       'len' = apply(RF_train_iter500 , 1, length ))
-
 RF_train_iter500_summary %>% cbind(Gd_forRF) %>% dplyr::select(mean,sd,sem,matchStatus) %>% 
-  ggplot(aes(mean, log10(1/sd))) + geom_point(aes(col=matchStatus), cex=0.5)
+  ggplot(aes(mean, log10(1/sd))) + geom_point(aes(col=matchStatus), cex=0.5) +
+  ylim(1,3.5)
+
+ggsave("../results/SF6a.pdf",width=5,height=4)
 
 ```
+
+
+
+
 
 ##SFigure 4b
 
@@ -555,11 +690,11 @@ for(i in c(50,100,200,300,400,500)){
   }
 }
 
-#saveRDS("../data/RF_sample_iter500.Rds")
+saveRDS(RF_sample_iter500, "../data/RF_sample_iter500.Rds")
 
 ```
 
-Plot robustness
+Plot reproducibility
 ```{r, eval=TRUE}
 
 RF_sample_iter500 <- readRDS("../data/RF_sample_iter500.Rds")
@@ -574,7 +709,9 @@ RF_sample_iter500 %>%
   geom_boxplot(alpha=0.2, aes(col=matchStatus )) +
   xlab('Training set size') + ylab("sd(Probability of high-confidence category)")
 
+ggsave("../results/SF6b.pdf",width=7,height=4)
 ```
+
 
 ##SFigure 4c
 ```{r}
@@ -594,31 +731,64 @@ RF_sample_iter500 %>%
   left_join(Gd_all_RFconf %>% select(GeneID,exactMatchPred,RF_confidence),
             by="GeneID") %>% filter(RF_confidence!="") %>% 
   ggplot(aes(x=meanCall,y=meanVal)) +         
-  geom_point(aes(col=matchStatus),cex=0.2) + 
+  geom_point(aes(col=RF_confidence),cex=0.2) + 
   facet_wrap(~ trainingSetSize) 
 
+ggsave("../results/SF6c.pdf",width=8,height=4)
 ```
 
-#Clustering analysis
 
-##Features of LC-like models
+
+##Features of lower conf-like models?
 ```{r}
-
 Gd_all_RFconf %>% filter(RF_confidence=="LowerConf-like") %>% 
-  left_join(metrics_df_PFAM_long,by="GeneID") %>% 
-  group_by(GeneID) %>% filter(PDB_PFAMpref %in% GDB_PFAMpref) %>%  
-  select(GeneID,contains('pref'), PFAM_desc) %>% 
-  distinct() %>% ungroup() %>% 
-  count(PFAM_desc) %>% arrange(desc(n))
+  left_join(metrics_long,by="GeneID") %>% 
+  filter(PDB_PFAMpref== GDB_PFAMpref) %>% 
+  select(GeneID,GDB_PFAMpref) %>% 
+  distinct() %>% 
+  left_join(PFAM_descriptionTable,by=c('GDB_PFAMpref' = 'PFAMcode')) %>% 
+  count(desc) %>% arrange(desc(n)) %>% filter(n>1)
 
 Gd_all_RFconf %>% filter(RF_confidence=="LowerConf") %>% 
-  left_join(metrics_df_PFAM_long,by="GeneID") %>% 
-  group_by(GeneID) %>% 
-  select(GeneID,GDB_PFAMpref, PFAM_desc) %>% na.omit() %>% 
-  distinct() %>% ungroup() %>% 
-  count(GDB_PFAMpref, PFAM_desc) %>% arrange(desc(n))
+  left_join(metrics_long,by="GeneID") %>% 
+  select(GeneID,GDB_PFAMpref) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  left_join(PFAM_descriptionTable,by=c('GDB_PFAMpref' = 'PFAMcode')) %>% 
+  count(desc) %>% arrange(desc(n)) %>% filter(n>5)
+
+
 
 ```
+
+
+##Compute relative abundance of domains across confidence groups
+```{r}
+
+Gd_all_RFconf %>% 
+  left_join(metrics_long,by="GeneID") %>% 
+  select(GeneID,GDB_PFAMpref,PDB_PFAMpref, RF_confidence) %>%distinct() %>%  
+  gather(key,value,-c(GeneID,RF_confidence)) %>% 
+  distinct() %>% ungroup() %>% 
+  filter(RF_confidence!="") %>% na.omit() %>% 
+  group_by(RF_confidence,key) %>% count(value) %>% 
+  spread(RF_confidence,n, fill = 0) %>% 
+  filter(key=="GDB_PFAMpref") %>% 
+  rowwise() %>% 
+  mutate(ratio = (LowerConf /1389) / (sum(`HiConf`,`HiConf-like`,`LowerConf-like`) / 1389)) %>% 
+  filter(LowerConf>0, ratio!="Inf") %>% 
+  arrange(desc(ratio)) %>% 
+  left_join(PFAM_descriptionTable,by=c('value'='PFAMcode')) %>% 
+  select(desc,ratio, everything())
+  
+  
+    
+```
+
+
+
+
+#Clustering analysis
 
 
 ##SFigure 5
@@ -659,27 +829,31 @@ blst_TM_mds %>%
   scale_shape_manual(values=c('HiConf'=1,'HiConf-like' = 1, 'LowerConf' =2, "LowerConf-like" = 2)) +
   facet_wrap(~ dtype , scales="free")
 
-
+ggsave("../results/SF7.pdf",width=9,height=4)
 
 ```
 
 
-#SFigure 6
+
+#Transcriptional abundance
+##SFigure 6
 Transcriptional abundance by RF confidence
 ```{r, message='hide', warning='none'}
 
 transcription_cpm <- read_tsv("../data/Ansell_2017_GiardiaCPM.tsv", col_types = cols())
 
+
 transc_by_category <- Gd_all_RFconf %>% 
-   mutate(transcriptLen=(GDB_AA * 3)-3) %>% 
-   left_join(transcription_cpm,by="GeneID") %>%  
+   mutate(transcriptLen=(GDB_AA * 3) - 3) %>% 
+   left_join(transcription_cpm,by="GeneID") %>% 
    select(GeneID,RF_confidence,transcriptLen,contains('-s')) %>% 
    gather(key,value,-c(GeneID,transcriptLen,RF_confidence)) %>% 
    mutate(value=ifelse(is.na(value),0.1,value)) %>% 
    mutate(value=value/transcriptLen) %>% na.omit() %>% 
-   group_by(GeneID,RF_confidence) %>% summarize(meanVal=mean(value))
+   group_by(GeneID,RF_confidence) %>% summarize(meanVal=mean(value)) %>% 
+  filter(!RF_confidence=="") 
  
- transc_by_category %>% 
+transc_by_category %>% 
    filter(meanVal > 0.001) %>% 
    ggplot(aes(x=RF_confidence,y=log10(meanVal))) + 
    geom_boxplot(aes(fill=RF_confidence), width=0.5, col="black", alpha=0.5) +
@@ -688,6 +862,7 @@ transc_by_category <- Gd_all_RFconf %>%
    theme(axis.text.x=element_text(angle=45, hjust=1)) + 
    xlab("") + ylab("log10(length-normalized CPM)")
 
+ggsave("../results/SF8.pdf",width=4,height=4)
 
 #Test differences 
 aov_transc.res <- aov(meanVal ~ RF_confidence, 
@@ -701,45 +876,62 @@ TukeyHSD(aov_transc.res)
 #Supplementary Tables
 
 Write supplementary Tables
-```{r, eval=FALSE}
+```{r}
 
-write_csv(Gd_all_RFconf %>% 
-            select(GeneID, Description, code_chain,Species, Molecule,TM:RMSD_model_sd, lenRatio, 
-                   contains('prop'), contains('DB_AA'), SS_sd, 
-                   matchStatus, exactMatchPred, RF_confidence, descBin),
-          path="../STable_1.csv")
+write_tsv(Gd_all_RFconf %>% 
+            select(-c(seq.ssLen,
+                      nHrc,nErc,nCrc,
+                      strucSum,strpPDB_AA, codechain)) %>% 
+                     dplyr::rename(Exact_match_prediction =exactMatchPred,
+                Length_ratio=lenRatio,Match_status=matchStatus,`AA_%ID`=AApc,
+                C_score=Cscore,
+                Annot_status=descBin,Confidence_category =RF_confidence) %>% 
+            arrange(desc(C_score,Confidence_category)),
+            path="../results/STable_2.tsv")
 
-write_csv(Gd_all_RFconf %>% 
-            select(GeneID, Description, code_chain,Species, Molecule,TM:RMSD_model_sd, lenRatio, 
-                   contains('prop'), contains('DB_AA'), SS_sd, 
-                   matchStatus, exactMatchPred, RF_confidence, descBin) %>%             
+write_tsv(Gd_all_RFconf %>% 
+            select(-c(seq.ssLen,
+                      nHrc,nErc,nCrc,
+                      strucSum,strpPDB_AA, codechain)) %>% 
             filter(RF_confidence=="HiConf-like" & descBin=="Hyp") %>%
-            select(-descBin) %>% arrange(desc(Cscore,TM)), 
-          path="../STable_3.csv")
+            dplyr::rename(Exact_match_prediction =exactMatchPred,
+                Length_ratio=lenRatio,Match_status=matchStatus,`AA_%ID`=AApc,
+                C_score=Cscore,
+                Annot_status=descBin,Confidence_category =RF_confidence) %>% 
+              arrange(desc(C_score,Confidence_category)), 
+          path="../results/STable_3.tsv")
 
 ```
 
 
 
-##STable 2
 
+
+
+
+#RF clasifier sans %AA ID
+##Figure 3b
 RF classifier without AA_%ID
-```{r}
+```{r, eval=FALSE}
 
 TRAIN_nopcAA <- forTRAIN %>% dplyr::select(-c(GeneID,AApc)) 
 
 rf_model_nopcAA <- train(matchStatus ~. , data=TRAIN_nopcAA, method="rf",
                   trControl = trainControl(method="cv", number=5, verboseIter=FALSE),
                   prox=TRUE, verbose=FALSE)
+saveRDS(rf_model_nopcAA, "../data/rf_model_nopcAA.Rds")
+```
 
+```{r}
 
+rf_model_nopcAA <- readRDS("../data/rf_model_nopcAA.Rds")
 print(rf_model_nopcAA$finalModel)
 
 ```
 
 
 
-Classifier performance
+Classifier performance without % AA ID.
 ```{r}
 
 predTEST_nopcAA <- predict(rf_model_nopcAA, newdata=TEST, type="prob")
@@ -751,12 +943,14 @@ predALL_nopcAA <- predict(rf_model_nopcAA, newdata=Gd_forRF, type="prob")
 #accuracy on hold-out TEST set:
 TEST %>%  mutate(RFexact_pred_nopcAA = predTEST_nopcAA$exactMatch) %>% 
   mutate(predStatus=ifelse(RFexact_pred_nopcAA > 0.5,"exactMatch","noMatch")) %>% 
-  count(matchStatus, predStatus)
+  count(matchStatus, predStatus) %>% 
+  group_by(matchStatus) %>% mutate(gpErr=n/sum(n))
 
 #entire proteome
 Gd_forRF %>% mutate(RFexact_pred_nopcAA = predALL_nopcAA$exactMatch) %>% 
   mutate(predStatus=ifelse(RFexact_pred_nopcAA > 0.5,"exactMatch","noMatch")) %>% 
-  count(matchStatus, predStatus)
+  count(matchStatus, predStatus) %>% 
+  group_by(matchStatus) %>% mutate(gpErr=n/sum(n))
 
 
 ```
@@ -785,6 +979,5 @@ imp_plot_nopcAA <- Gd_imp_nopcAA %>%
 
 imp_plot_nopcAA
 
-#write_csv(Gd_imp_nopcAA, path="../STable_2.csv")
-
+ggsave("../results/SF5.pdf", imp_plot_nopcAA, width=4,height=3)
 ```
